@@ -442,8 +442,11 @@ fn ensure_java(store: &Path, cancel: Option<Cancel>, progress: &dyn Fn(&str, u64
 /// release lands beside it, and the Java that runs it is the one [`ensure_java`] made sure of. A
 /// folder that names no version can't be told from an older one, so it isn't kept either.
 fn ensure_ghidra(store: &Path, cancel: Option<Cancel>, progress: &dyn Fn(&str, u64, Option<u64>)) -> Result<PathBuf, ToolError> {
-    let kept = |l: &PathBuf| is_at_least_current(version_hint_of(l).as_ref());
-    if let Some(found) = crate::in_managed(&store.join(ID), host_exes()).filter(kept) {
+    // The version check goes to the candidates, not to whichever launcher a plain lookup returns
+    // first: a copy kept directly in the folder names no version, so it is neither kept as this
+    // release nor allowed to hide a versioned one beside it.
+    let kept = || in_child(&store.join(ID), |d| crate::in_managed(d, host_exes())).filter(|l| is_at_least_current(version_hint_of(l).as_ref()));
+    if let Some(found) = kept() {
         return Ok(found);
     }
     let Some(ghidra) = pin(ID) else {
@@ -451,9 +454,7 @@ fn ensure_ghidra(store: &Path, cancel: Option<Cancel>, progress: &dyn Fn(&str, u
             .with_remediation(format!("Install Ghidra {VERSION} from {PAGE}, then choose its folder in Settings → Engines.")));
     };
     fetch(ghidra, store, ID, "Ghidra", cancel, progress)?;
-    crate::in_managed(&store.join(ID), host_exes())
-        .filter(kept)
-        .ok_or_else(|| ToolError::new(ErrorCode::GarbledOutput, "Ghidra was unpacked, but its launcher wasn't where we expected."))
+    kept().ok_or_else(|| ToolError::new(ErrorCode::GarbledOutput, "Ghidra was unpacked, but its launcher wasn't where we expected."))
 }
 
 /// One pinned archive: download beside the store (hashed as it streams; a mismatch deletes it),
@@ -584,7 +585,7 @@ fn judged_java(java: GhidraJava, floor: u32) -> GhidraJava {
 pub fn check_java(cfg: &Config) -> Result<(), GhidraError> {
     let below = is_below_current(version_hint_of(&cfg.analyze_headless).as_ref());
     if below && LEGACY_POLICY == LegacyPolicy::Refuse {
-        return Err(GhidraError::Launch(format!(
+        return Err(GhidraError::Preflight(format!(
             "Ghidra {VERSION} is the supported version, and the one chosen ({}) isn't supported any more. Install Ghidra {VERSION} from Settings → Engines.",
             cfg.analyze_headless.display()
         )));
@@ -595,7 +596,7 @@ pub fn check_java(cfg: &Config) -> Result<(), GhidraError> {
         return Ok(());
     };
     if !has_java(&home) {
-        return Err(GhidraError::Launch(format!(
+        return Err(GhidraError::Preflight(format!(
             "The folder set as Ghidra's Java ({}) has no bin/java, so Ghidra can't start. Choose a JDK folder in Settings → Engines, or clear the setting to use the one the guided install brings.",
             home.display()
         )));
@@ -603,7 +604,7 @@ pub fn check_java(cfg: &Config) -> Result<(), GhidraError> {
     let floor = java_floor(version_hint_of(&cfg.analyze_headless).as_ref());
     match java::verdict(&home, floor) {
         JavaVerdict::Ok(_) => Ok(()),
-        JavaVerdict::TooOld(found) => Err(GhidraError::Launch(format!(
+        JavaVerdict::TooOld(found) => Err(GhidraError::Preflight(format!(
             "Ghidra needs Java {floor}, but the Java it would run on is Java {found} ({}). Choose a newer Java in Settings → Engines, or clear the setting to use the one the guided install brings.",
             home.display()
         ))),
@@ -1178,6 +1179,9 @@ mod tests {
         assert!(check_java(&cfg(Some(&old))).is_err(), "Java 21 must not run Ghidra 12.2");
         let err = check_java(&cfg(Some(&old))).unwrap_err().to_string();
         assert!(err.contains("25") && err.contains("21"), "{err}");
+        // A preflight refusal, not a start failure: Deep mode must not remember it for the target
+        // (an import failure is a `Launch` and stays remembered).
+        assert!(matches!(check_java(&cfg(Some(&old))), Err(GhidraError::Preflight(_))), "the Java refusal is the preflight's");
         assert!(check_java(&cfg(Some(&good))).is_ok());
         // Nothing chosen: the inherited `JAVA_HOME` or a `java` on PATH isn't ours to refuse,
         // because a wrapper launcher may pick its own Java.

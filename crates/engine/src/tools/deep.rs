@@ -239,9 +239,10 @@ pub(super) fn provider_for_active(ctx: &mut Ctx<'_>) -> Result<Arc<dyn DeepDecom
         Ok(session) => remember(ctx, Ok(Arc::new(session))),
         // Stopped by the caller: try again next time rather than remembering a failure.
         Err(ghidra::GhidraError::Cancelled) => Err(Some(NotUsed::new(Unavailable::Stopped, "Ghidra was stopped before it was ready."))),
-        // Java too old, or a folder set as its Java with none in it: the person fixes that in
-        // Settings, so it isn't remembered for the target — the next call reads the setting again.
-        Err(ghidra::GhidraError::Launch(message)) => Err(Some(NotUsed::new(Unavailable::NotStarted, message))),
+        // Ghidra's preflight: a Java too old, or a folder set as its Java with none in it. The
+        // person fixes that in Settings, so it isn't remembered for the target — the next call
+        // reads the setting again. An import failure (`Launch`) is remembered below, as before.
+        Err(ghidra::GhidraError::Preflight(message)) => Err(Some(NotUsed::new(Unavailable::NotStarted, message))),
         Err(e) => {
             log::warn!("Deep mode (Ghidra) unavailable; using the built-in engine: {e}");
             remember(ctx, Err(NotUsed::new(Unavailable::OpenFailed, format!("Ghidra couldn't open this program ({e})."))))
