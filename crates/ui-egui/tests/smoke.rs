@@ -309,6 +309,52 @@ fn confirming_an_upgrade_stops_selecting_the_kept_older_install() {
     assert!(old.is_file(), "the older install stays on disk");
 }
 
+/// The download keeps going when the dialog is closed, so the intent must go with it: otherwise
+/// the release it brings is set up but the kept older install stays selected.
+#[test]
+fn closing_the_dialog_during_an_upgrade_still_switches_to_the_new_release() {
+    use craft_anything_ui_egui::state::Modal;
+    let d = tempfile::tempdir().unwrap();
+    let store = d.path().join("engines");
+    let kept = d.path().join("ghidra").join("ghidra_12.1.4_PUBLIC");
+    let exe = if cfg!(windows) { "analyzeHeadless.bat" } else { "analyzeHeadless" };
+    let launcher = |root: &std::path::Path| {
+        std::fs::create_dir_all(root.join("support")).unwrap();
+        std::fs::write(root.join("support").join(exe), b"").unwrap();
+        root.join("support").join(exe)
+    };
+    let old = launcher(&kept);
+    let new = launcher(&store.join("ghidra").join("ghidra_12.2_PUBLIC"));
+    let mut h = harness(move || {
+        let mut a = demo::app(demo::engine(Mode::Beginner, true));
+        a.settings.deep_mode = true;
+        a.settings.engines.store_dir = Some(store);
+        a.settings.engines.only_configured = true;
+        a.settings.engines.ghidra.install_dir = Some(kept);
+        a.ghidra.upgrade = true;
+        a.state.modal = Some(Modal::Ghidra);
+        a
+    });
+    // The download the dialog started, still running when the person closes it.
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let job = h.state_mut().jobs.spawn("Getting Ghidra", true, move |j| {
+        while matches!(rx.recv_timeout(Duration::from_millis(20)), Err(std::sync::mpsc::RecvTimeoutError::Timeout)) && !j.cancel.is_cancelled() {}
+        Ok(craft_anything_ui_egui::Done::Nothing)
+    });
+    h.state_mut().ghidra.job = Some(job);
+    h.run_steps(2);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert!(h.state().state.modal.is_none(), "closed while it downloads");
+    assert!(h.state().ghidra.upgrade, "the intent stays with the running download");
+    h.state_mut().ghidra_got();
+    h.run_steps(2);
+    assert_eq!(h.state().settings.engines.ghidra.install_dir, None, "the kept install is no longer selected");
+    assert_eq!(h.state_mut().ghidra_found(), Some(new.as_path()), "the release it brought is found instead");
+    assert!(old.is_file(), "the older install stays on disk");
+    drop(tx);
+}
+
 #[test]
 fn deep_mode_without_ghidra_asks_to_get_it_before_using_it() {
     use craft_anything_engine::workspace::TargetRef;

@@ -714,6 +714,23 @@ mod tests {
         assert_eq!((linux.format, linux.strip_prefix), (crate::ArchiveFormat::TarGz, None), "Linux keeps jdk-…/bin/java, one folder down");
     }
 
+    /// Installing Java 25 over a store that already holds a managed `jdk/Home` (what the 12.1.4
+    /// setup unpacked) leaves that runtime in place: a kept install keeps the Java it runs on.
+    #[test]
+    fn a_newer_java_lands_beside_the_runtime_it_does_not_replace() {
+        let store = tempfile::tempdir().unwrap();
+        let dest = store.path().join(JAVA_FOLDER);
+        let old = jdk(&dest.join("Home"), "21.0.5");
+        let incoming = store.path().join(".jdk.incoming");
+        jdk(&incoming.join(format!("jdk-{JDK_PINNED}/Contents/Home")), "25.0.1");
+        swap_in(&incoming, &dest).unwrap();
+        let java = if cfg!(windows) { "java.exe" } else { "java" };
+        let new = dest.join(format!("jdk-{JDK_PINNED}/Contents/Home"));
+        assert!(old.join("bin").join(java).is_file(), "the Java a kept 12.1.4 runs on is untouched");
+        assert_eq!(java_home(None, None, store.path()), Some(new), "12.2 gets the Java 25 that came with it");
+        assert!(!incoming.exists());
+    }
+
     /// Ghidra's folder holds both scripts; the `.bat` can't start off Windows (#1084).
     #[test]
     fn the_launcher_looked_for_on_path_is_this_systems_own() {

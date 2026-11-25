@@ -169,8 +169,10 @@ pub fn modals(app: &mut CraftApp, ctx: &egui::Context) {
                 Modal::Assets => crate::engine_ui::assets_modal(app, ui, &mut close),
                 Modal::Ghidra => {
                     crate::engine_ui::ghidra_modal(app, ui, &mut close);
-                    // An upgrade asked for in Settings → Engines lasts for this dialog only.
-                    if close {
+                    // An upgrade asked for in Settings → Engines lasts for this dialog only —
+                    // unless the download it started is still running and keeps going in the
+                    // background: `ghidra_got` still has to switch to the release it brings.
+                    if close && app.ghidra.job.is_none() {
                         app.ghidra.upgrade = false;
                     }
                 }
