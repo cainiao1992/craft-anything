@@ -788,7 +788,7 @@ fn live_ghidra_makes_and_decompiles_code_reached_only_through_a_pointer_table() 
     let temp = tempfile::Builder::new().prefix("ghidra-live").tempdir().unwrap();
     let cfg = Config {
         analyze_headless: get::headless(None, &store).expect("Ghidra in the engine store"),
-        java_home: get::java_home(None, &store),
+        java_home: get::java_home(get::headless(None, &store).as_deref(), None, &store),
         startup_timeout: Duration::from_secs(600),
         store_dir: temp.path().to_path_buf(),
         language_id: None,
@@ -837,7 +837,7 @@ fn live_ghidra_reports_where_it_loaded_a_position_independent_elf() {
     let temp = tempfile::Builder::new().prefix("ghidra-live").tempdir().unwrap();
     let cfg = Config {
         analyze_headless: get::headless(None, &store).expect("Ghidra in the engine store"),
-        java_home: get::java_home(None, &store),
+        java_home: get::java_home(get::headless(None, &store).as_deref(), None, &store),
         startup_timeout: Duration::from_secs(600),
         store_dir: temp.path().to_path_buf(),
         language_id: None,
@@ -862,7 +862,7 @@ fn live_ghidra_bounds_a_jump_table_with_no_bounds_check() {
     let temp = tempfile::Builder::new().prefix("ghidra-live").tempdir().unwrap();
     let cfg = Config {
         analyze_headless: get::headless(None, &store).expect("Ghidra in the engine store"),
-        java_home: get::java_home(None, &store),
+        java_home: get::java_home(get::headless(None, &store).as_deref(), None, &store),
         startup_timeout: Duration::from_secs(600),
         store_dir: temp.path().to_path_buf(),
         language_id: None,

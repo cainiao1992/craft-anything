@@ -593,9 +593,11 @@ impl Settings {
         )
     }
 
-    /// The Java runtime Ghidra runs on (`None`: let Ghidra find its own).
+    /// The Java runtime Ghidra runs on (`None`: let Ghidra find its own). The floor follows the
+    /// Ghidra that would run: a kept 12.1.4 takes the managed Java 21 beside a Java 25.
     pub fn ghidra_java(&self) -> Option<PathBuf> {
-        craft_anything_engines::ghidra::get::java_home(self.engines.ghidra.java_home.as_deref(), &self.engine_store_dir())
+        let launcher = self.ghidra_launcher();
+        craft_anything_engines::ghidra::get::java_home(launcher.as_deref(), self.engines.ghidra.java_home.as_deref(), &self.engine_store_dir())
     }
 
     /// Where an external engine is on this computer, honouring every setting that can name one:

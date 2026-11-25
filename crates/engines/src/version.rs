@@ -1,6 +1,7 @@
 //! Versions found in folder and file names, compared the way people mean them: `12.10.0` is newer
 //! than `12.2` even though it sorts before it as text. Names without a version are never guessed
-//! at: [`version_order`] falls back to plain text for those, and [`parse`] returns `None`.
+//! at: [`version_order`] ranks them below the names that carry a version and falls back to plain
+//! text among themselves, and [`parse`] returns `None`.
 
 /// A version read out of a name: `ghidra_12.2_PUBLIC` is `[12, 2]`, `jdk-25.0.5.1+2` is
 /// `[25, 0, 5, 1]` (it stops before the build number after `+` or `_`).
@@ -33,9 +34,18 @@ pub fn parse(name: &str) -> Option<Version> {
     (!parts.is_empty()).then_some(Version(parts))
 }
 
-/// Folder and file names in version order: runs of digits compare as numbers (`java-8` before
-/// `java-17`, `12.1.4` before `12.10.0`), the rest as text.
+/// Folder and file names in version order, newest last: runs of digits compare as numbers
+/// (`java-8` before `java-17`, `12.1.4` before `12.10.0`), the rest as text, and a name that
+/// carries a version outranks one that carries none (`ghidra_custom` before
+/// `ghidra_12.2_PUBLIC`, whatever the letters say), because a name without a version can't be
+/// told from an older release. Searches sort by it and take the last match, so the newest and the
+/// versioned win.
 pub fn version_order(a: &str, b: &str) -> std::cmp::Ordering {
+    match (parse(a).is_some(), parse(b).is_some()) {
+        (true, false) => return std::cmp::Ordering::Greater,
+        (false, true) => return std::cmp::Ordering::Less,
+        _ => {}
+    }
     fn parts(s: &str) -> Vec<(bool, &str)> {
         let mut out = Vec::new();
         let mut start = 0;
@@ -110,5 +120,9 @@ mod tests {
         assert_eq!(version_order("a", "a"), Equal);
         assert_eq!(version_order("jdk-021", "jdk-21"), Less);
         assert_eq!(version_order("z", "y"), Greater);
+        // A name without a version never outranks one that says its version, however it reads.
+        assert_eq!(version_order("ghidra_custom", "ghidra_12.2_PUBLIC"), Less);
+        assert_eq!(version_order("ghidra_12.2_PUBLIC", "ghidra_custom"), Greater);
+        assert_eq!(version_order("jdk-25.0.5.1+2", "Home"), Greater);
     }
 }

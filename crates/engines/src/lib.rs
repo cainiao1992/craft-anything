@@ -253,7 +253,8 @@ mod tests {
     #[test]
     fn the_java_ghidras_setup_brings_is_the_java_runtime() {
         let java = if cfg!(windows) { "java.exe" } else { "java" };
-        // Linux and Windows keep the JDK's own top folder; macOS's pin strips it down to `Home`.
+        // The JDK keeps its own top folder (macOS inside it `Contents/Home`), and a `jdk/Home` an
+        // earlier setup unpacked is still found, so a kept install keeps the Java it had.
         for (top, major) in [("jdk-25.0.5.1+2", "25.0.1"), ("Home", "25.0.1")] {
             let store = tempfile::tempdir().unwrap();
             let exe = store.path().join("jdk").join(top).join("bin").join(java);
@@ -262,7 +263,7 @@ mod tests {
             std::fs::write(store.path().join("jdk").join(top).join("release"), format!("JAVA_VERSION=\"{major}\"\n")).unwrap();
             assert_eq!(locate_configured("java", &NoOverrides, store.path()), Some(exe.clone()), "{top}");
             // The same Java Ghidra is pointed at.
-            assert_eq!(ghidra::get::java_home(None, store.path()).map(|h| h.join("bin").join(java)), Some(exe), "{top}");
+            assert_eq!(ghidra::get::java_home(None, None, store.path()).map(|h| h.join("bin").join(java)), Some(exe), "{top}");
         }
     }
 
