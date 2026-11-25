@@ -47,6 +47,13 @@ fn is_below_current(hint: Option<&Version>) -> bool {
     hint.is_some_and(|v| *v < min_current())
 }
 
+/// Whether a folder name says a release this new or newer. A name without a readable version
+/// can't be told from an older one, so it never counts as this one — only for deciding whether
+/// the guided setup may keep what it finds, never for refusing to start Ghidra.
+fn is_at_least_current(hint: Option<&Version>) -> bool {
+    hint.is_some_and(|v| *v >= min_current())
+}
+
 /// The Java floor a Ghidra of this version needs: 25 for this release and anything of unknown
 /// version, 21 for a kept legacy install.
 fn java_floor(hint: Option<&Version>) -> u32 {
@@ -369,18 +376,18 @@ fn managed_java(store: &Path, min: u32) -> Option<PathBuf> {
 
 /// Download, check and unpack Java (unless one new enough is already managed) and Ghidra (unless
 /// one this new or newer is already managed or outside the store), then point Ghidra at that
-/// Java. `configured_java` is the Java set for Ghidra: an outside copy that would run on a
-/// too-old Java isn't reused, because only a store install can be pointed at the Java the setup
-/// brings. `progress` gets (what, bytes so far, total); a step with no bytes (0, `None`) is
+/// Java. `explicit_java` is the Java folder set for Ghidra in Settings: an outside copy that would
+/// run on a too-old Java isn't reused, because only a store install can be pointed at the Java the
+/// setup brings. `progress` gets (what, bytes so far, total); a step with no bytes (0, `None`) is
 /// setting up. Returns the headless launcher. Only ever writes inside `store`.
-pub fn install(store: &Path, configured_java: Option<&Path>, cancel: Option<Cancel>, progress: &dyn Fn(&str, u64, Option<u64>)) -> Result<PathBuf, ToolError> {
+pub fn install(store: &Path, explicit_java: Option<&Path>, cancel: Option<Cancel>, progress: &dyn Fn(&str, u64, Option<u64>)) -> Result<PathBuf, ToolError> {
     // Ghidra this new or newer is already on this computer, outside our store (PATH, a system
     // package, Homebrew, an unzipped copy in Downloads…): use it rather than download the same
     // release again (#740). An older copy is not reused (the person asked for this release), and
     // neither is one whose Java is known to be too old or missing: writing a Java override into
     // another program's folder isn't ours to do, so the store copy is set up instead.
     let inherited = std::env::var_os("JAVA_HOME").map(PathBuf::from);
-    if let Some(found) = locate_install(None, store).filter(|i| reusable_outside(i, store, configured_java, inherited.as_deref())) {
+    if let Some(found) = locate_install(None, store).filter(|i| reusable_outside(i, store, explicit_java, inherited.as_deref())) {
         return Ok(found.launcher);
     }
     let (Some(_), Some(_)) = (pin(ID), pin("java")) else {
@@ -400,11 +407,20 @@ pub fn install(store: &Path, configured_java: Option<&Path>, cancel: Option<Canc
 /// Java isn't ours to change in another program's folder (`brew`'s, say), so the store copy is set
 /// up instead — which is also the recovery "Get Ghidra" offers for a Java too old for an outside
 /// Ghidra. A folder that names no version can't be told from an older one, so it isn't reused: the
-/// person asked for this release.
-fn reusable_outside(install: &GhidraInstall, store: &Path, configured: Option<&Path>, inherited: Option<&Path>) -> bool {
+/// person asked for this release. The Java is the one *this candidate* would get — the folder set
+/// in Settings, else the managed JDK its own version needs — not one resolved for another Ghidra.
+fn reusable_outside(install: &GhidraInstall, store: &Path, explicit: Option<&Path>, inherited: Option<&Path>) -> bool {
+    let configured = java_home(Some(&install.launcher), explicit, store);
     !install.launcher.starts_with(store)
-        && install.version_hint.as_ref().is_some_and(|v| *v >= min_current())
-        && !matches!(java_in_use(&install.launcher, configured, inherited), GhidraJava::TooOld { .. } | GhidraJava::NotJava(_))
+        && is_at_least_current(install.version_hint.as_ref())
+        && can_start_on(&java_in_use(&install.launcher, configured.as_deref(), inherited))
+}
+
+/// Whether a Ghidra can start on the Java it would run on: anything but one known to be too old,
+/// a folder set as its Java with none in it, or no Java at all — a store install is the one we can
+/// point at the Java the setup brings, so an outside copy that can't start isn't reused.
+fn can_start_on(java: &GhidraJava) -> bool {
+    !matches!(java, GhidraJava::TooOld { .. } | GhidraJava::NotJava(_) | GhidraJava::Missing)
 }
 
 /// A managed Java new enough for Ghidra: the one already there, or a freshly downloaded Temurin
@@ -421,11 +437,13 @@ fn ensure_java(store: &Path, cancel: Option<Cancel>, progress: &dyn Fn(&str, u64
     managed_java(store, JAVA_MAJOR).ok_or_else(|| ToolError::new(ErrorCode::GarbledOutput, "Java was unpacked, but there was no usable Java home in it."))
 }
 
-/// The managed Ghidra: the one already unpacked (this version or newer) or a freshly downloaded
-/// one. An older managed install is kept as it is and left untouched; this release lands beside
-/// it, and the Java that runs it is the one [`ensure_java`] made sure of.
+/// The managed Ghidra: the one already unpacked with a folder naming this version or newer, or a
+/// freshly downloaded one. An older managed install is kept as it is and left untouched; this
+/// release lands beside it, and the Java that runs it is the one [`ensure_java`] made sure of. A
+/// folder that names no version can't be told from an older one, so it isn't kept either.
 fn ensure_ghidra(store: &Path, cancel: Option<Cancel>, progress: &dyn Fn(&str, u64, Option<u64>)) -> Result<PathBuf, ToolError> {
-    if let Some(found) = crate::in_managed(&store.join(ID), host_exes()).filter(|l| !is_below_current(version_hint_of(l).as_ref())) {
+    let kept = |l: &PathBuf| is_at_least_current(version_hint_of(l).as_ref());
+    if let Some(found) = crate::in_managed(&store.join(ID), host_exes()).filter(kept) {
         return Ok(found);
     }
     let Some(ghidra) = pin(ID) else {
@@ -434,7 +452,7 @@ fn ensure_ghidra(store: &Path, cancel: Option<Cancel>, progress: &dyn Fn(&str, u
     };
     fetch(ghidra, store, ID, "Ghidra", cancel, progress)?;
     crate::in_managed(&store.join(ID), host_exes())
-        .filter(|l| !is_below_current(version_hint_of(l).as_ref()))
+        .filter(kept)
         .ok_or_else(|| ToolError::new(ErrorCode::GarbledOutput, "Ghidra was unpacked, but its launcher wasn't where we expected."))
 }
 
@@ -708,9 +726,13 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let store = d.path().join("store");
         let exe = if cfg!(windows) { "analyzeHeadless.bat" } else { "analyzeHeadless" };
-        // None, unless this computer has Ghidra on PATH, from a system package, or from Homebrew.
+        // None, unless this computer has Ghidra on PATH, from a system package, from Homebrew, or
+        // in a usual unpacked folder.
         let e = crate::engine(ID).unwrap();
-        let installed = crate::find_on_path(&[exe]).is_some() || crate::well_known(ID).iter().any(|p| p.is_file()) || crate::find_in_package_paths(e).is_some();
+        let installed = crate::find_on_path(&[exe]).is_some()
+            || crate::well_known(ID).iter().any(|p| p.is_file())
+            || crate::find_in_package_paths(e).is_some()
+            || crate::find_in_known_roots(ID, e.host_exes(), &e.known_root_folders()).is_some();
         assert!(headless(None, &store).is_none() || installed);
         // The managed install: the zip's own top folder under <store>/ghidra.
         let managed = store.join("ghidra/ghidra_12.2_PUBLIC/support").join(exe);
@@ -1213,5 +1235,23 @@ mod tests {
         let unnamed = install_of(ghidra_folder(&d.path().join("elsewhere/ghidra")), GhidraSource::UnpackedFolder);
         assert_eq!(unnamed.version_hint, None);
         assert!(!reusable_outside(&unnamed, &store, Some(&good), None));
+        // A managed JDK new enough for that copy is the Java it would run on, with nothing set for
+        // it: resolved for this candidate, not for whichever Ghidra Settings selects.
+        jdk(&store.join(JAVA_FOLDER).join("jdk-25.0.5.1+2"), "25.0.1");
+        assert!(reusable_outside(&outside, &store, None, None), "the managed Java it needs is enough");
+    }
+
+    /// A copy with no Java at all can't be reused: nothing could start it, so "Get Ghidra" sets up
+    /// the store copy with the Java it brings instead of reporting that the outside one is ready.
+    #[test]
+    fn a_ghidra_with_no_java_is_not_something_to_reuse() {
+        assert!(!can_start_on(&GhidraJava::Missing));
+        assert!(!can_start_on(&GhidraJava::TooOld { dir: PathBuf::from("/jdk-21"), found: 21, needed: 25 }));
+        assert!(!can_start_on(&GhidraJava::NotJava(PathBuf::from("/not-a-jdk"))));
+        // The rest may start: a good one, one Ghidra was pointed at, and one whose version can't be
+        // read (Ghidra gets to judge that, as at launch).
+        assert!(can_start_on(&GhidraJava::Override(PathBuf::from("/jdk-25"))));
+        assert!(can_start_on(&GhidraJava::OnPath(PathBuf::from("/usr/bin/java"))));
+        assert!(can_start_on(&GhidraJava::Unknown(PathBuf::from("/jdk"))));
     }
 }

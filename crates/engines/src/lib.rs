@@ -159,12 +159,15 @@ fn in_path_setting(id: &str, p: &Path) -> Option<PathBuf> {
 /// folder of JDKs holds `java-8-…` beside `java-25-…`).
 pub(crate) fn in_managed(dir: &Path, exes: &[&str]) -> Option<PathBuf> {
     let here = |d: &Path| exes.iter().flat_map(|exe| [d.join(exe), d.join("bin").join(exe), d.join("support").join(exe)]).find(|p| p.is_file());
-    if let Some(p) = here(dir) {
+    // A JDK folder may keep its home one `Contents/Home` deeper (macOS, and the guided install
+    // unpacks Temurin so), which `java::home_in` resolves.
+    let found = |d: &Path| here(d).or_else(|| java::home_in(d).and_then(|home| here(&home)));
+    if let Some(p) = found(dir) {
         return Some(p);
     }
     let mut subs: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
     subs.sort_by(|a, b| version_order(&a.file_name().unwrap_or_default().to_string_lossy(), &b.file_name().unwrap_or_default().to_string_lossy()));
-    subs.iter().rev().find_map(|d| here(d))
+    subs.iter().rev().find_map(|d| found(d))
 }
 
 /// An unpacked install in one of `roots` (each with how many levels down to look): a folder whose
@@ -253,14 +256,16 @@ mod tests {
     #[test]
     fn the_java_ghidras_setup_brings_is_the_java_runtime() {
         let java = if cfg!(windows) { "java.exe" } else { "java" };
-        // The JDK keeps its own top folder (macOS inside it `Contents/Home`), and a `jdk/Home` an
-        // earlier setup unpacked is still found, so a kept install keeps the Java it had.
-        for (top, major) in [("jdk-25.0.5.1+2", "25.0.1"), ("Home", "25.0.1")] {
+        // The JDK keeps its own top folder and may keep its home one `Contents/Home` deeper (as
+        // macOS has it and as the guided install unpacks it); a `jdk/Home` an earlier setup
+        // unpacked is still found, so a kept install keeps the Java it had.
+        for (top, major) in [("jdk-25.0.5.1+2", "25.0.1"), ("Home", "25.0.1"), ("jdk-25.0.5.1+2/Contents/Home", "25.0.1")] {
             let store = tempfile::tempdir().unwrap();
-            let exe = store.path().join("jdk").join(top).join("bin").join(java);
+            let home = store.path().join("jdk").join(top);
+            let exe = home.join("bin").join(java);
             std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
             std::fs::write(&exe, "").unwrap();
-            std::fs::write(store.path().join("jdk").join(top).join("release"), format!("JAVA_VERSION=\"{major}\"\n")).unwrap();
+            std::fs::write(home.join("release"), format!("JAVA_VERSION=\"{major}\"\n")).unwrap();
             assert_eq!(locate_configured("java", &NoOverrides, store.path()), Some(exe.clone()), "{top}");
             // The same Java Ghidra is pointed at.
             assert_eq!(ghidra::get::java_home(None, None, store.path()).map(|h| h.join("bin").join(java)), Some(exe), "{top}");

@@ -786,9 +786,11 @@ fn live_ghidra_makes_and_decompiles_code_reached_only_through_a_pointer_table() 
     let Some(store) = std::env::var_os("CRAFT_ANYTHING_TEST_GHIDRA").map(PathBuf::from) else { return };
     // Ghidra rejects project paths with a folder that starts with a dot, as tempdir()'s do.
     let temp = tempfile::Builder::new().prefix("ghidra-live").tempdir().unwrap();
+    let launcher = get::headless(None, &store).expect("Ghidra in the engine store");
+    let java = get::java_home(Some(&launcher), None, &store);
     let cfg = Config {
-        analyze_headless: get::headless(None, &store).expect("Ghidra in the engine store"),
-        java_home: get::java_home(get::headless(None, &store).as_deref(), None, &store),
+        analyze_headless: launcher,
+        java_home: java,
         startup_timeout: Duration::from_secs(600),
         store_dir: temp.path().to_path_buf(),
         language_id: None,
@@ -835,9 +837,11 @@ fn addresses_move_between_our_image_base_and_the_engines() {
 fn live_ghidra_reports_where_it_loaded_a_position_independent_elf() {
     let Some(store) = std::env::var_os("CRAFT_ANYTHING_TEST_GHIDRA").map(PathBuf::from) else { return };
     let temp = tempfile::Builder::new().prefix("ghidra-live").tempdir().unwrap();
+    let launcher = get::headless(None, &store).expect("Ghidra in the engine store");
+    let java = get::java_home(Some(&launcher), None, &store);
     let cfg = Config {
-        analyze_headless: get::headless(None, &store).expect("Ghidra in the engine store"),
-        java_home: get::java_home(get::headless(None, &store).as_deref(), None, &store),
+        analyze_headless: launcher,
+        java_home: java,
         startup_timeout: Duration::from_secs(600),
         store_dir: temp.path().to_path_buf(),
         language_id: None,
@@ -860,9 +864,11 @@ fn live_ghidra_reports_where_it_loaded_a_position_independent_elf() {
 fn live_ghidra_bounds_a_jump_table_with_no_bounds_check() {
     let Some(store) = std::env::var_os("CRAFT_ANYTHING_TEST_GHIDRA").map(PathBuf::from) else { return };
     let temp = tempfile::Builder::new().prefix("ghidra-live").tempdir().unwrap();
+    let launcher = get::headless(None, &store).expect("Ghidra in the engine store");
+    let java = get::java_home(Some(&launcher), None, &store);
     let cfg = Config {
-        analyze_headless: get::headless(None, &store).expect("Ghidra in the engine store"),
-        java_home: get::java_home(get::headless(None, &store).as_deref(), None, &store),
+        analyze_headless: launcher,
+        java_home: java,
         startup_timeout: Duration::from_secs(600),
         store_dir: temp.path().to_path_buf(),
         language_id: None,

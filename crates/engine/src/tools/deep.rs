@@ -48,6 +48,9 @@ pub enum Unavailable {
     NoBytes,
     /// Ghidra was stopped before it was ready.
     Stopped,
+    /// Ghidra's own preflight refused it: a Java too old for that release, or a folder set as its
+    /// Java with none in it. Fixable in Settings, so never remembered for the target.
+    NotStarted,
     /// Ghidra couldn't import the program or its headless analyzer didn't start.
     OpenFailed,
     /// Ghidra opened the program but has no function at this address and couldn't make one.
@@ -65,6 +68,7 @@ impl Unavailable {
             Unavailable::NotInstalled => "Ghidra isn't installed",
             Unavailable::NoBytes => "the program's bytes aren't loaded",
             Unavailable::Stopped => "Ghidra was stopped",
+            Unavailable::NotStarted => "Ghidra couldn't start",
             Unavailable::OpenFailed => "Ghidra couldn't open this program",
             Unavailable::NoFunction => "Ghidra has no function here",
             Unavailable::NoAnswer => "Ghidra had no answer",
@@ -80,7 +84,7 @@ impl Unavailable {
     /// The error code for a request that only Ghidra could have answered.
     pub fn error_code(self) -> ErrorCode {
         match self {
-            Unavailable::NotInstalled | Unavailable::OpenFailed => ErrorCode::EngineMissing,
+            Unavailable::NotInstalled | Unavailable::NotStarted | Unavailable::OpenFailed => ErrorCode::EngineMissing,
             Unavailable::NoBytes => ErrorCode::FeatureMissing,
             Unavailable::Stopped => ErrorCode::Cancelled,
             Unavailable::DecompileFailed => ErrorCode::ProgramFailed,
@@ -136,18 +140,23 @@ pub const STOPPED_NOTE: &str = "The person stopped Ghidra's analysis for this pr
 
 /// Why Ghidra can't be used, as (reason, remediation), from the one status verdict that every
 /// listing shows. What the builder sees here and what the availability panel says come from the
-/// same place, so neither can contradict the Settings page.
-pub fn why_not_ghidra(settings: &Settings) -> (String, String) {
+/// same place, so neither can contradict the Settings page. The verdict is passed in, not looked
+/// up again: a second look could see another state than the one that refused the call.
+pub fn why_not_ghidra(st: &craft_anything_engines::ghidra::get::GhidraStatus) -> (String, String) {
     use craft_anything_engines::ghidra::get::{GhidraJava, GhidraState, VERSION};
-    let st = settings.ghidra_status();
-    let hint = |st: &craft_anything_engines::ghidra::get::GhidraStatus| st.install.as_ref().map(|i| format!(" ({})", i.launcher.display())).unwrap_or_default();
+    let hint = st.install.as_ref().map(|i| format!(" ({})", i.launcher.display())).unwrap_or_default();
+    // The install actually chosen: a kept 12.1.4 needs Java 21 where 12.2 needs 25.
+    let chosen = match st.install.as_ref().and_then(|i| i.version_hint.as_ref()) {
+        Some(v) => format!("Ghidra {v}"),
+        None => "Ghidra".to_string(),
+    };
     match st.state {
         GhidraState::Incomplete => (
-            format!("Deep mode is on, but Ghidra's install is incomplete: the folder{} has no headless launcher in it.", hint(&st)),
+            format!("Deep mode is on, but Ghidra's install is incomplete: the folder{hint} has no headless launcher in it."),
             "Reinstall Ghidra from Settings → Engines, or choose its folder there.".into(),
         ),
         GhidraState::UnsupportedVersion => (
-            format!("Deep mode is on, but the Ghidra on this computer{} isn't supported any more.", hint(&st)),
+            format!("Deep mode is on, but the Ghidra on this computer{hint} isn't supported any more."),
             format!("Install Ghidra {VERSION} from Settings → Engines."),
         ),
         GhidraState::JavaTooOld => match &st.java {
@@ -157,7 +166,7 @@ pub fn why_not_ghidra(settings: &Settings) -> (String, String) {
             ),
             GhidraJava::TooOld { found, needed, .. } => (
                 format!(
-                    "Deep mode is on, but the Java Ghidra would run on ({found}) is too old for it: Ghidra {VERSION} needs Java {needed}, so Ghidra wasn't started."
+                    "Deep mode is on, but the Java Ghidra would run on ({found}) is too old for it: {chosen} needs Java {needed}, so Ghidra wasn't started."
                 ),
                 format!("Install Java {needed} from Settings → Engines (Ghidra's setup brings it), or choose a newer Java folder there."),
             ),
@@ -218,7 +227,7 @@ pub(super) fn provider_for_active(ctx: &mut Ctx<'_>) -> Result<Arc<dyn DeepDecom
     let Some((cfg, digest)) = config(&ctx.session.settings, language) else {
         // Not installed, or installed and unusable (a legacy install under a refusing policy, a
         // Java too old): the reason says which, not just "not installed".
-        let (message, _) = why_not_ghidra(&ctx.session.settings);
+        let (message, _) = why_not_ghidra(&ctx.session.settings.ghidra_status());
         return Err(Some(NotUsed::new(Unavailable::NotInstalled, message)));
     };
     let cancel = ctx.cancel.clone();
@@ -230,6 +239,9 @@ pub(super) fn provider_for_active(ctx: &mut Ctx<'_>) -> Result<Arc<dyn DeepDecom
         Ok(session) => remember(ctx, Ok(Arc::new(session))),
         // Stopped by the caller: try again next time rather than remembering a failure.
         Err(ghidra::GhidraError::Cancelled) => Err(Some(NotUsed::new(Unavailable::Stopped, "Ghidra was stopped before it was ready."))),
+        // Java too old, or a folder set as its Java with none in it: the person fixes that in
+        // Settings, so it isn't remembered for the target — the next call reads the setting again.
+        Err(ghidra::GhidraError::Launch(message)) => Err(Some(NotUsed::new(Unavailable::NotStarted, message))),
         Err(e) => {
             log::warn!("Deep mode (Ghidra) unavailable; using the built-in engine: {e}");
             remember(ctx, Err(NotUsed::new(Unavailable::OpenFailed, format!("Ghidra couldn't open this program ({e})."))))
@@ -1610,9 +1622,31 @@ mod tests {
         let not_a_jdk = d.path().join("not-a-jdk");
         std::fs::create_dir_all(&not_a_jdk).unwrap();
         s.engines.ghidra.java_home = Some(not_a_jdk);
-        let (reason, remediation) = why_not_ghidra(&s);
+        let (reason, remediation) = why_not_ghidra(&s.ghidra_status());
         assert!(reason.contains("no bin/java"), "{reason}");
         assert!(!reason.contains("(0)"), "{reason}");
         assert!(!remediation.is_empty());
+    }
+
+    /// A kept 12.1.4 whose Java is too old says its own version and its own floor: the pinned
+    /// release's numbers would name a Java the install doesn't need.
+    #[test]
+    fn a_kept_legacy_installs_java_refusal_names_its_own_version() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = Settings::default();
+        s.engines.store_dir = Some(d.path().join("engines"));
+        s.engines.only_configured = true;
+        let exe = if cfg!(windows) { "analyzeHeadless.bat" } else { "analyzeHeadless" };
+        let legacy = d.path().join("engines/ghidra/ghidra_12.1.4_PUBLIC/support").join(exe);
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, b"x").unwrap();
+        let jdk = d.path().join("jdk-17");
+        std::fs::create_dir_all(jdk.join("bin")).unwrap();
+        std::fs::write(jdk.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" }), b"").unwrap();
+        std::fs::write(jdk.join("release"), "JAVA_VERSION=\"17.0.9\"\n").unwrap();
+        s.engines.ghidra.java_home = Some(jdk);
+        let (reason, _) = why_not_ghidra(&s.ghidra_status());
+        assert!(reason.contains("Ghidra 12.1.4") && reason.contains("Java 21"), "{reason}");
+        assert!(!reason.contains("12.2"), "{reason}");
     }
 }

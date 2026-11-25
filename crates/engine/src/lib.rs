@@ -275,12 +275,13 @@ impl Engine {
             }
             Requires::Ghidra => {
                 if !session.clean_room() {
-                    match session.settings.ghidra_status().state {
-                        s if s.usable() => Availability::ok(),
-                        _ => {
-                            let (reason, remediation) = tools::deep::why_not_ghidra(&session.settings);
-                            Availability::no(reason, remediation)
-                        }
+                    let st = session.settings.ghidra_status();
+                    if st.state.usable() {
+                        Availability::ok()
+                    } else {
+                        // The verdict looked up once, so the words can't describe another state.
+                        let (reason, remediation) = tools::deep::why_not_ghidra(&st);
+                        Availability::no(reason, remediation)
                     }
                 } else {
                     Availability::no("This needs Deep mode (with Ghidra), and you're in Clean room mode.", "Turn on Deep mode in the title bar or Settings.")
@@ -383,9 +384,10 @@ impl Engine {
         if !avail.available {
             let code = match spec.requires {
                 Requires::Target => ErrorCode::NotFound,
-                // A missing external engine (adb, frida, …) is a provider problem, not a capability
-                // the build lacks; agents branch on this to offer an install.
-                Requires::Engine(_) => ErrorCode::EngineMissing,
+                // A missing external engine (adb, frida, Ghidra…) is a provider problem, not a
+                // capability the build lacks; agents branch on this to offer an install. The
+                // handler says the same for Ghidra (`NotUsed::error_code`).
+                Requires::Engine(_) | Requires::Ghidra => ErrorCode::EngineMissing,
                 _ => ErrorCode::FeatureMissing,
             };
             let mut err = ToolError::new(code, avail.reason.unwrap_or_default());

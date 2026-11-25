@@ -34,17 +34,17 @@ pub fn parse(name: &str) -> Option<Version> {
     (!parts.is_empty()).then_some(Version(parts))
 }
 
-/// Folder and file names in version order, newest last: runs of digits compare as numbers
-/// (`java-8` before `java-17`, `12.1.4` before `12.10.0`), the rest as text, and a name that
-/// carries a version outranks one that carries none (`ghidra_custom` before
-/// `ghidra_12.2_PUBLIC`, whatever the letters say), because a name without a version can't be
-/// told from an older release. Searches sort by it and take the last match, so the newest and the
-/// versioned win.
+/// Folder and file names in version order, newest last: the versions [`parse`] reads compare as
+/// numbers first (`java-8` before `java-17`, `12.1.4` before `12.10.0`, `12.2` before `12.2.1`
+/// however the rest of the name reads), and a name that carries a version outranks one that
+/// carries none (`ghidra_custom` before `ghidra_12.2_PUBLIC`), because a name without a version
+/// can't be told from an older release. Only names that name the same version (or none) are
+/// compared as text. Searches sort by it and take the last match, so the newest and the versioned
+/// win.
 pub fn version_order(a: &str, b: &str) -> std::cmp::Ordering {
-    match (parse(a).is_some(), parse(b).is_some()) {
-        (true, false) => return std::cmp::Ordering::Greater,
-        (false, true) => return std::cmp::Ordering::Less,
-        _ => {}
+    match parse(a).cmp(&parse(b)) {
+        std::cmp::Ordering::Equal => {}
+        o => return o,
     }
     fn parts(s: &str) -> Vec<(bool, &str)> {
         let mut out = Vec::new();
@@ -107,10 +107,10 @@ mod tests {
     fn odd_names_never_panic() {
         let long = format!("ghidra_{}.0_PUBLIC", "9".repeat(64));
         assert!(parse(&long).is_some(), "an overlong part is skipped, not a panic");
-        assert_eq!(version_order(&long, "ghidra_12.2_PUBLIC"), Greater);
         for odd in ["ghidra_12.2.\u{0}", "12.2.999999999999999999999", "…12.2"] {
             let _ = parse(odd);
             let _ = version_order(odd, odd);
+            assert_eq!(version_order(odd, odd), Equal);
         }
     }
 
@@ -124,5 +124,8 @@ mod tests {
         assert_eq!(version_order("ghidra_custom", "ghidra_12.2_PUBLIC"), Less);
         assert_eq!(version_order("ghidra_12.2_PUBLIC", "ghidra_custom"), Greater);
         assert_eq!(version_order("jdk-25.0.5.1+2", "Home"), Greater);
+        // The version decides before the rest of the name does: `_PUBLIC` sorts after `.`, which
+        // put 12.2 above 12.2.1 when only the text was compared.
+        assert_eq!(version_order("ghidra_12.2_PUBLIC", "ghidra_12.2.1_PUBLIC"), Less);
     }
 }
