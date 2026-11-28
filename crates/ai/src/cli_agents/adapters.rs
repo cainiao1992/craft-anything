@@ -7,6 +7,7 @@ use super::*;
 
 mod aider;
 mod antigravity;
+mod codebuddy;
 mod copilot;
 mod devin;
 mod dsh;
@@ -17,6 +18,7 @@ mod maki;
 mod opencode;
 pub use aider::Aider;
 pub use antigravity::Antigravity;
+pub use codebuddy::CodeBuddy;
 pub use copilot::Copilot;
 pub use devin::Devin;
 pub use dsh::DeepSeekHarness;
@@ -257,6 +259,12 @@ pub trait AgentAdapter: Send + Sync {
     fn check_remote_tool_server(&self, _host: &str, _stop: &CancelToken) -> Result<(), ToolError> {
         Ok(())
     }
+    /// Whether its ACP mode works on another computer over `ssh`. ACP carries the approval channel
+    /// there, so a backend with an SSH host keeps ACP instead of falling back to a per-message run
+    /// that an ACP-only agent refuses. Default: the ACP mode needs this computer.
+    fn acp_over_ssh(&self) -> bool {
+        false
+    }
     /// Prepare this run's tool server on a remote SSH host (a config file there), returning the
     /// environment variable to set on the remote command. Default: the agent can't carry one.
     fn remote_tool_server(&self, _host: &str, _mcp: &McpCommand, _access: Access) -> Result<Option<(&'static str, String)>, ToolError> {
@@ -342,6 +350,7 @@ impl AgentAdapters {
                 Arc::new(DeepSeekHarness),
                 Arc::new(Devin),
                 Arc::new(KimiCode),
+                Arc::new(CodeBuddy),
             ],
         }
     }
