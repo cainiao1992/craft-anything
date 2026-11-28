@@ -1014,6 +1014,13 @@ mod tests {
         let status = status(None, Some(&java), store.path());
         assert_eq!(status.state, GhidraState::Ready, "{:?}", status.java);
         assert_eq!(status.install.as_ref().unwrap().version_hint, Some(Version(vec![12, 2])));
+        // A patch release outranks the release it patches: `12.2.1` over `12.2`, though `_PUBLIC`
+        // sorts after `.` as text.
+        let patched = store.path().join("ghidra/ghidra_12.2.1_PUBLIC/support").join(exe);
+        touch(&patched);
+        let found = locate_install(None, store.path()).unwrap();
+        assert_eq!(found.launcher, patched, "the patch release is the one selected");
+        assert_eq!(found.version_hint, Some(Version(vec![12, 2, 1])));
         // `12.10.0` is newer than `12.2`, not the other way round.
         let newest = store.path().join("ghidra/ghidra_12.10.0_PUBLIC/support").join(exe);
         touch(&newest);

@@ -11,7 +11,7 @@ use crate::state::{MakeDraft, Modal, Screen};
 use crate::theme::{self, Tokens};
 use crate::{CraftApp, Done, icons, widgets};
 use craft_anything_ai::rebuild::KindRegistry;
-use craft_anything_engine::{CallOptions, Caller};
+use craft_anything_engine::{CallOptions, Caller, ToolOutput};
 use craft_anything_engines::assets::{AssetProvider, AssetProviders, fal};
 use craft_anything_engines::game::{self, Builder, Inventory};
 use craft_anything_engines::ghidra::{self, get};
@@ -164,20 +164,29 @@ impl CraftApp {
         let id = self.jobs.spawn(tr("Getting Ghidra"), true, move |j| {
             let progress = j.reporter();
             let opts = CallOptions::new(Caller::Ui).with_cancel(j.cancel.clone()).with_progress(&progress);
-            engine.call("engines_install", serde_json::json!({"engine": "ghidra"}), opts).map_err(|e| e.for_people())?;
-            Ok(Done::GhidraGot)
+            let out = engine.call("engines_install", serde_json::json!({"engine": "ghidra"}), opts).map_err(|e| e.for_people())?;
+            // Where the setup ended, as `engines_install` reports it: the install to select now.
+            let launcher = match out {
+                ToolOutput::Value(v) => v["path"].as_str().map(PathBuf::from).unwrap_or_default(),
+                ToolOutput::Evidence(_) => PathBuf::new(),
+            };
+            Ok(Done::GhidraGot(launcher))
         });
         self.ghidra.job = Some(id);
     }
 
-    pub fn ghidra_got(&mut self) {
+    /// The setup finished on `launcher`: the install to use now, so a folder set in Settings that
+    /// selects another install no longer selects it (that copy stays on disk). An upgrade always
+    /// switches, from the kept older install; any other setup switches when the folder selects
+    /// another install, as an outside copy whose Java can't run it (the recovery "Get Ghidra"
+    /// offers for a Java too old). The engine clears its own copy in `engines_install`; this keeps
+    /// the app's in step, or the next settings change would hand the folder back.
+    pub fn ghidra_got(&mut self, launcher: PathBuf) {
         let upgraded = self.ghidra.upgrade;
         let waiting = self.ghidra.start_after.take();
         self.ghidra = GhidraFlow::default();
-        if upgraded {
-            // The release just set up is the one to use now. A folder set in Settings that points
-            // at the kept older install would still win discovery, so it no longer selects it;
-            // the older copy stays on disk (GhidraFlow resets, so the status is looked up again).
+        if upgraded || self.settings.ghidra_folder_selects_other(&launcher) {
+            // GhidraFlow was reset above, so the status is looked up again on the next question.
             self.settings.engines.ghidra.install_dir = None;
             self.settings_changed();
         }

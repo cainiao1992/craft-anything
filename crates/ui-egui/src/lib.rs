@@ -230,8 +230,8 @@ pub enum Done {
         builder: craft_anything_engines::game::Builder,
         installer: bool,
     },
-    /// Ghidra and its Java were downloaded and set up for Deep mode.
-    GhidraGot,
+    /// Ghidra and its Java were downloaded and set up for Deep mode; the launcher the setup ended on.
+    GhidraGot(PathBuf),
     /// A tool started by a button finished (see `CraftApp::act`).
     Acted {
         tool: &'static str,
@@ -1998,7 +1998,7 @@ impl CraftApp {
                 }
             }
             Done::EngineGot { builder, installer } => self.engine_got(builder, installer),
-            Done::GhidraGot => self.ghidra_got(),
+            Done::GhidraGot(launcher) => self.ghidra_got(launcher),
             Done::AssetKeys(keys) => self.asset_keys = Some(keys),
             Done::Wrote { what, path } => {
                 if let Some(p) = path {

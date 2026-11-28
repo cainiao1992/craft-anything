@@ -203,10 +203,12 @@ pub fn modals(app: &mut CraftApp, ctx: &egui::Context) {
 }
 
 /// Close the dialog without choosing (Esc, a click outside). With nothing downloading, the
-/// project waiting on it doesn't start later by itself.
+/// project waiting on it doesn't start later by itself, and an upgrade asked for in Settings →
+/// Engines doesn't outlive the dialog that asked for it.
 pub fn dismiss(app: &mut CraftApp) {
     if app.ghidra.job.is_none() {
         app.ghidra.start_after = None;
+        app.ghidra.upgrade = false;
     }
     if app.engine_flow.job.is_none() {
         app.engine_flow.start_after = false;

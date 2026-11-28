@@ -580,6 +580,14 @@ impl Settings {
         }
     }
 
+    /// Whether the Ghidra folder set in Settings selects an install other than `launcher`. Once a
+    /// guided setup has `launcher` ready, that folder would still win the search, so it stops
+    /// selecting anything (the other copy stays on disk). `engines_install` and the app's own
+    /// dialog ask this, so both switch to the same install.
+    pub fn ghidra_folder_selects_other(&self, launcher: &Path) -> bool {
+        self.engines.ghidra.install_dir.is_some() && self.ghidra_launcher().as_deref() != Some(launcher)
+    }
+
     /// The one verdict on Ghidra that every listing shows (`engines_list`, the Settings page, the
     /// doctor, `Requires::Ghidra`): usable or not, found where, on which Java. All four take
     /// theirs from here, so none can disagree with what Deep mode does. A test session

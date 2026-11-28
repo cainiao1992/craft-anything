@@ -576,15 +576,14 @@ fn engines_install(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolE
         }
     };
     // The release just set up is the one to use now: a folder saved in Settings that selects
-    // another install would still win discovery, so it no longer selects it. The older copy stays
-    // on disk. The app does the same after an upgrade from Settings → Engines.
+    // another install would still win discovery, so it no longer selects it. The other copy stays
+    // on disk. The app's Ghidra dialog asks the same when its setup finishes.
     if id == "ghidra" {
         // The session's own file, as every other settings change here: an isolated session must
         // never write the person's real config.toml.
         let config = ctx.session.config_dir().join("config.toml");
         let s = &mut ctx.session.settings;
-        let overridden = s.engines.ghidra.install_dir.is_some() && s.ghidra_launcher().as_deref() != Some(path.as_path());
-        if overridden {
+        if s.ghidra_folder_selects_other(&path) {
             s.engines.ghidra.install_dir = None;
             s.save_to(&config)?;
         }
